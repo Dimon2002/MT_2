@@ -13,7 +13,9 @@ static const string Separators = "Separators";
 static const string OperationSigns = "OperationSigns";
 static const string VariableFile = "VariableTable";
 static const string TokensFile = "Tokens";
+static const string ErrorsFile = "Errors";
 static const string OutFileFormat = "Out";
+
 
 
 #pragma region ConstTable
@@ -282,7 +284,8 @@ private:
 		LETTER,
 		DIGIT,
 		SLASH,
-		SYMBOL
+		SYMBOL,
+		NOTALLOWEDSYMBOL
 	};
 
 	enum NumberTable
@@ -299,6 +302,14 @@ private:
 		BAD,
 		WATCHMORE,
 		ALLBAD
+	};
+
+	enum ErrorType
+	{
+		SymbolAfterNumber,
+		NotAllowedSymbol,
+		LineCommentError,
+		UnclosedСommentary
 	};
 
 	ConstTable SeparatorsTable = (Separators + Format);
@@ -321,7 +332,7 @@ private:
 	pair<int, int> SymbolParseToToken(const string& str);
 	CommentStatus SlashParseToToken(const string& str);
 
-	void ErrorHandling(int LineIndex, int ColumIndex);
+	void ErrorHandling(int LineIndex, int ColumIndex, ofstream* fout, ErrorType st);
 };
 
 void Scanner::FileReader(const string& file)
@@ -342,6 +353,8 @@ void Scanner::FileReader(const string& file)
 void Scanner::CreateTokensFile()
 {
 	ofstream fout(TokensFile + Format);
+	ofstream fout2(ErrorsFile + Format);
+
 
 	pair<int, int> token;
 	CommentStatus st = OK;
@@ -374,7 +387,7 @@ void Scanner::CreateTokensFile()
 			{
 			case LETTER:
 				token = LetterParseToToken(currentStr.substr(j));
-	
+
 				if (st != WATCHMORE)
 					fout << token;
 				break;
@@ -385,7 +398,7 @@ void Scanner::CreateTokensFile()
 
 				if (token.first == -1)
 				{
-					ErrorHandling(i, j); // Встретили цифру
+					ErrorHandling(i, j, &fout2, SymbolAfterNumber); // Встретили цифру
 					continue;
 				}
 
@@ -400,6 +413,7 @@ void Scanner::CreateTokensFile()
 
 				if (st == Scanner::CommentStatus::WATCHMORE)
 				{
+
 					_sizeWord = currentStr.size();
 					continue;
 				}
@@ -407,31 +421,20 @@ void Scanner::CreateTokensFile()
 				if (st == Scanner::CommentStatus::BAD)
 				{
 					st = WATCHMORE;
-					ErrorHandling(i, j); // Ошибка комментария на строке
+					ErrorHandling(i, j, &fout2, LineCommentError); // Ошибка комментария на строке
 					continue;
-				}
-
-				if (st == Scanner::CommentStatus::ALLBAD)
-				{
-					ErrorHandling(i, j); // Не закрыт комментарий до конца файла
-					exit(1);
 				}
 
 				break;
 			case SYMBOL:
 				token = SymbolParseToToken(currentStr.substr(j));
 
-				if (token.first == -1)
-				{
-					ErrorHandling(i, j); // Ошибка символа следующего за символом операций или за символом разделителей
-					continue;
-				}
-
 				if (st != WATCHMORE)
 					fout << token;
 
 				break;
 			default:
+				ErrorHandling(i, j, &fout2, NotAllowedSymbol);
 				break;
 			}
 		}
@@ -439,9 +442,12 @@ void Scanner::CreateTokensFile()
 	}
 
 	if (st == Scanner::CommentStatus::WATCHMORE)
-		ErrorHandling(1, 1); // Поменять цифры + Это означает что чубрик не закрыл комментарий до конца проги
+		ErrorHandling(-1, -1, &fout2, UnclosedСommentary);
 
 	fout.close();
+	fout2.close();
+
+	VariableTable.PrintTable(VariableFile + OutFileFormat + Format);
 }
 
 void Scanner::SetState(char s)
@@ -464,7 +470,12 @@ void Scanner::SetState(char s)
 		return;
 	}
 
-	_state = Scanner::SymbolState::SYMBOL;
+	if (SeparatorsTable.IndexByWord(string(1, s)) != -1 || OperationSignsTable.IndexByWord(string(1, s)) != -1) {
+		_state = Scanner::SymbolState::SYMBOL;
+		return;
+	}
+
+	_state = Scanner::SymbolState::NOTALLOWEDSYMBOL;
 }
 
 pair<int, int> Scanner::LetterParseToToken(const string& str)
@@ -488,9 +499,14 @@ pair<int, int> Scanner::DigitParseToToken(const string& str)
 	_sizeWord = str.find_first_of(letters);
 	string word = str.substr(0, _sizeWord);
 
-	char* res;
-	if (strtol(word.c_str(), &res, 10) == 0) // Не работает "0" !!!
+	if (!all_of(word.begin(), word.end(), isdigit))
+	{
 		return make_pair(-1, -1);
+	}
+
+	//char* res;
+	//if (strtol(word.c_str(), &res, 10) == 0 ) // Не работает "0" !!! || word != "0"
+	//	return make_pair(-1, -1);
 
 	int IndexTableElement = VariableTable.SearchByWord(word);
 
@@ -523,7 +539,7 @@ Scanner::CommentStatus Scanner::SlashParseToToken(const string& str)
 		_sizeWord += 3;
 		return Scanner::CommentStatus::OK;
 	}
-	
+
 	return Scanner::CommentStatus::ALLBAD; // "/**"
 }
 
@@ -539,8 +555,6 @@ pair<int, int> Scanner::SymbolParseToToken(const string& str)
 
 		if (SeparatorsTable.IndexByWord(string(1, str[1])) == -1 || KeywordsTable.IndexByWord(string(1, str[1])) == -1)
 			return make_pair(NumberTable::OperationSignTable, OperationSignsTable.IndexByWord(word));
-
-		return make_pair(-1, -1);
 	}
 
 	int iscontains = SeparatorsTable.IndexByWord(string(1, str[0]));
@@ -558,13 +572,28 @@ pair<int, int> Scanner::SymbolParseToToken(const string& str)
 		_sizeWord = 1;
 		return make_pair(NumberTable::OperationSignTable, OperationSignsTable.IndexByWord(string(1, str[0])));
 	}
-
-	return make_pair(-1, -1);
 }
 
-void Scanner::ErrorHandling(int LineIndex, int ColumIndex)
+void Scanner::ErrorHandling(int LineIndex, int ColumIndex, ofstream* fout, ErrorType erType)
 {
-
+	*fout << "Error in line number " << LineIndex << " under character number " << ColumIndex << endl;
+	switch (erType)
+	{
+	case Scanner::SymbolAfterNumber:
+		*fout << "Error type: Symbol after digit" << endl;
+		break;
+	case Scanner::NotAllowedSymbol:
+		*fout << "Error type: Not allowed symbol" << endl;
+		break;
+	case Scanner::LineCommentError:
+		*fout << "Error type: Line comment error" << endl;
+		break;
+	case Scanner::UnclosedСommentary:
+		*fout << "Error type: Unclosed commentary" << endl;
+		break;
+	default:
+		break;
+	}
 }
 
 #pragma endregion

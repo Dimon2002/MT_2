@@ -1,11 +1,7 @@
-int main()
+void main()
 {
-   // int a= 10;
-   /**/int  x=5;
-
-   /*
-   * abc
-   */
-   return 1;
-
+   int a = 10;
+   /*while(a < 15){
+      a = a + 1;
+   }
 }

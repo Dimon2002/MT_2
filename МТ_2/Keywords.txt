@@ -1,3 +1,4 @@
+void
 while
 int
 return

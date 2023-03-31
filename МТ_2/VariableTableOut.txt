@@ -1,4 +1,4 @@
-[1] { Value1, Unknow type, 150 }
+[1] { a, Unknow type, -1 }
 
-[2] { Value2, int, -1 }
+[2] { 10, Unknow type, -1 }
 
